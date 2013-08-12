@@ -110,20 +110,22 @@ func CreateStructRev(size int, tfold bool) []byte {
 	return s
 }
 
-func PermutateStructFront(s []byte) {
+func PermutateStructFront(s []byte) (result bool) {
 	var j int
-	for j = 0; s[j] <= 1 && j < len(s); j++ {
+	for j = 0; j < len(s) && s[j] <= 1; j++ {
 	}
 
 	if j < len(s) {
 		for i := j + 1; i < len(s); i++ {
 			if s[i] < 3 {
 				s[i]++
+				result = true
 				break
 			}
 		}
 		s[j]--
 	}
+	return
 }
 
 func PermutateStructRev(s []byte) bool {

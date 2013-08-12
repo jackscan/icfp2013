@@ -210,7 +210,9 @@ func structGenerator(ctx *ProblemContext, sres chan *[]byte, done chan int, quic
 
 			select {
 			case <-quick:
-				PermutateStructFront(st)
+				if !PermutateStructFront(st) {
+					break
+				}
 				fmt.Println("quick ", st)
 			default:
 				if !PermutateStructRev(st) {
