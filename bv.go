@@ -27,7 +27,7 @@ func compile3(b []byte) (EvalFunc, EvalFunc, EvalFunc, int) {
 func Compile(b []byte) EvalFunc {
 	fn, size := compile1(b)
 	if size != len(b) {
-		panic(fmt.Sprintf("|%s| == %d != %d", string(b), len(b), size))
+		panic(fmt.Sprintf("compile: |%s| == %d != %d", string(b), len(b), size))
 	}
 	return fn
 }
@@ -129,7 +129,7 @@ func AnalyzeFunc(fn []byte) []byte {
 	//fmt.Printf("0: %v, 1: %v, %s, %s\n", z, n, string(fn), string(ac.ignoreMask))
 
 	if s != len(fn) {
-		panic(fmt.Errorf("|%s| == %d != %d", string(fn), len(fn), s))
+		panic(fmt.Errorf("analyze: |%s| == %d != %d", string(fn), len(fn), s))
 	}
 
 	return ac.ignoreMask
