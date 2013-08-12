@@ -5,71 +5,26 @@ import (
 	"fmt"
 	"math/rand"
 	// "sort"
+	"sync"
 )
 
-type ProblemContext struct {
-	size      int
-	length    int
-	ops1      []byte
-	ops2      []byte
-	ops3      []byte
-	tfold     bool
-	arguments []uint64
-	outputs   []uint64
+type OpCount struct {
+	max   int
+	count int
 }
 
-type NextSolution func(s []byte) []byte
+type ProblemContext struct {
+	size    int
+	length  int
+	ops     [][]byte
+	foldOps [][]byte
+	tfold   bool
 
-func processOperators(ops []string) []byte {
-	// case 'X':
-	// 	return "x", 1
-	// case 'Y':
-	// 	return "y", 1
-	// case 'Z':
-	// 	return "z", 1
-	// case '0':
-	// 	return "0", 1
-	// case '1':
-	// 	return "1", 1
-	// case 'i':
-	// 	s1, i := ProgramToString(b[1:])
-	// 	s2, j := ProgramToString(b[1+i:])
-	// 	s3, k := ProgramToString(b[1+i+j:])
-	// 	return fmt.Sprintf("(if0 %s %s %s)", s1, s2, s3), 1 + i + j + k
-	// case 'f':
-	// 	s1, i := ProgramToString(b[1:])
-	// 	s2, j := ProgramToString(b[1+i:])
-	// 	s3, k := ProgramToString(b[1+i+j:])
-	// 	return fmt.Sprintf("(fold %s %s (lambda (y z) )%s)", s1, s2, s3), 1 + i + j + k
-	// case 'n':
-	// 	s, i := ProgramToString(b[1:])
-	// 	return fmt.Sprintf("(not %s)", s), 1 + i
-	// case 'l':
-	// 	s, i := ProgramToString(b[1:])
-	// 	return fmt.Sprintf("(shl1 %s)", s), 1 + i
-	// case 'r':
-	// 	s, i := ProgramToString(b[1:])
-	// 	return fmt.Sprintf("(shr1 %s)", s), 1 + i
-	// case 'q':
-	// 	s, i := ProgramToString(b[1:])
-	// 	return fmt.Sprintf("(shr4 %s)", s), 1 + i
-	// case 'h':
-	// 	s, i := ProgramToString(b[1:])
-	// 	return fmt.Sprintf("(shr16 %s)", s), 1 + i
-	// case 'a':
-	// 	s1, i := ProgramToString(b[1:])
-	// 	s2, j := ProgramToString(b[1+i:])
-	// 	return fmt.Sprintf("(and %s %s)", s1, s2), 1 + i + j
-	// case 'o':
-	// 	s1, i := ProgramToString(b[1:])
-	// 	s2, j := ProgramToString(b[1+i:])
-	// 	return fmt.Sprintf("(or %s %s)", s1, s2), 1 + i + j
-	// case 'x':
-	// 	s1, i := ProgramToString(b[1:])
-	// 	s2, j := ProgramToString(b[1+i:])
-	// 	return fmt.Sprintf("(xor %s %s)", s1, s2), 1 + i + j
-	// case 'p':
-	return nil
+	lock      sync.RWMutex
+	arguments []uint64
+	outputs   []uint64
+
+	opcount map[byte]OpCount
 }
 
 func (c *ProblemContext) Less(i, j int) bool {
@@ -90,12 +45,7 @@ func RandomArgs(size int) []uint64 {
 	args := make([]uint64, size)
 
 	for i, _ := range args {
-		// next:
 		a := uint64(rand.Uint32()) | (uint64(rand.Uint32()) << 32)
-		// j := sort.Search(c.Len(), func(i int) bool { return c.arguments[i] <= a })
-		// if j < c.Len() && c.arguments[j] == a {
-		// 	goto next
-		// }
 		args[i] = a
 	}
 
@@ -132,19 +82,48 @@ func PermutateStruct(s []byte) {
 	}
 }
 
-func CreateStructRev(size int) []byte {
+func CreateStructRev(size int, tfold bool) []byte {
 	s := make([]byte, size)
 
 	if size > 127 {
 		panic(fmt.Errorf("size %d too large", size))
 	}
 
-	s[0] = byte(size - 1)
-	for i := 0; s[i] > 3; i++ {
-		s[i+1] = s[i] - 3
-		s[i] = 3
+	if tfold {
+		s[0] = 3
+		s[1] = 0
+		s[2] = 0
+
+		s[3] = byte(size - 3 - 1)
+		for i := 3; s[i] > 3; i++ {
+			s[i+1] = s[i] - 3
+			s[i] = 3
+		}
+
+	} else {
+		s[0] = byte(size - 1)
+		for i := 0; s[i] > 3; i++ {
+			s[i+1] = s[i] - 3
+			s[i] = 3
+		}
 	}
 	return s
+}
+
+func PermutateStructFront(s []byte) {
+	var j int
+	for j = 0; s[j] <= 1 && j < len(s); j++ {
+	}
+
+	if j < len(s) {
+		for i := j + 1; i < len(s); i++ {
+			if s[i] < 3 {
+				s[i]++
+				break
+			}
+		}
+		s[j]--
+	}
 }
 
 func PermutateStructRev(s []byte) bool {
@@ -184,87 +163,238 @@ func PermutateStructRev(s []byte) bool {
 	return s[0] > 0
 }
 
-func getOps(c *ProblemContext, f []byte, arity byte) (ops []byte) {
+func InFold(index int, b []byte, st []byte) (result bool) {
+	result = false
+	i := bytes.IndexByte(b, 'f')
+	if i >= 0 {
+		i1 := skipStruct(st, i+1, 2)
+		i2 := skipStruct(st, i1, 1)
 
-	switch arity {
-	case 0:
-		ops = append(make([]byte, 0, 5), '0', '1', 'X')
-		if InFold(f) {
-			ops = append(ops, 'Y', 'Z')
+		// fmt.Printf("infold: %d, %d, %d, %d\n", i, i1, i2, index)
+		return i1 <= index && index < i2
+	}
+	return false
+}
+
+func skipStruct(s []byte, index int, count int) int {
+	a := count
+	var i int
+
+	// fmt.Printf("skip:\n%v\n", s[index:])
+
+	for i = index; a > 0; i++ {
+		a = a + int(s[i]) - 1
+		// fmt.Print(a, ",")
+	}
+	// fmt.Println(i)
+	return i
+}
+
+// Check if 2nd arg of all Op2 has smaller arity than 1st arg
+func CheckOp2StructRev(s []byte) bool {
+	for i, arity := range s {
+		if arity == 2 {
+			i1 := i + 1
+			i2 := skipStruct(s, i1, 1)
+			if s[i1] > s[i2] {
+				//fmt.Printf("skipop2 %v, %v, %b\n", s, s[i1:i2], s[i2])
+				return false
+			}
 		}
-	case 1:
-		ops = c.ops1
-	case 2:
-		ops = c.ops2
-	case 3:
-		ops = make([]byte, 0, 2)
+	}
+	return true
+}
 
-		if HasIf0(c.ops3) {
-			ops = append(ops, 'i')
-		}
+// func updateOpUsage(c *ProblemContext, op byte, unused *[]byte, acount int) bool {
 
-		if HasFold(c.ops3) && !HasFold(f) {
-			ops = append(ops, 'f')
+// }
+
+func checkOp(o []byte, fn []byte, st []byte, index int) bool {
+
+	if st[index] == 0 {
+		return true
+	}
+
+	ops := make([]byte, len(o))
+	copy(ops, o)
+
+	for _, b := range fn[:index+1] {
+		i := bytes.IndexByte(ops, b)
+		if i >= 0 {
+			n := len(ops) - 1
+			ops[i] = ops[n]
+			ops = ops[0:n]
 		}
 	}
 
-	return ops
+	acount := 0
+
+	for _, a := range st[index+1:] {
+		if a == st[index] {
+			acount++
+		}
+	}
+
+	if acount < len(ops) {
+		// fmt.Printf("checkOps: %s, %v, %d, %v\n", string(fn), st, index, string(ops))
+		return false
+	}
+	return true
+}
+
+func initFunc(c *ProblemContext, s []byte, f []byte, start int) bool {
+
+	for i := start; i < len(s); i++ {
+		arity := s[i]
+
+		ops := c.ops[arity]
+		if (arity == 3 && HasFold(f)) || InFold(i, f, s) {
+			ops = c.foldOps[arity]
+		}
+
+		if len(ops) == 0 {
+			return false
+		}
+
+		for j := 0; j < len(ops); j++ {
+			f[i] = ops[j]
+			if checkOp(ops, f, s, i) {
+				break
+			}
+		}
+	}
+	return true
 }
 
 func CreateFunc(c *ProblemContext, s []byte) []byte {
 	f := make([]byte, len(s))
 
-	for i, arity := range s {
-		ops := getOps(c, f[:i], arity)
-		if len(ops) == 0 {
-			return nil
+	if c.tfold {
+
+		// fmt.Println("tfold")
+
+		f[0] = 'f'
+		f[1] = 'X'
+		f[2] = '0'
+
+		for i := 3; i < len(s); i++ {
+
+			// fmt.Printf("%v, %s, %d, %v\n", s, string(f), i, *c)
+			arity := s[i]
+			ops := c.foldOps[arity]
+			if len(ops) == 0 {
+				// fmt.Println("exit", arity)
+				return nil
+			}
+
+			for j := 0; j < len(ops); j++ {
+				f[i] = ops[j]
+				if checkOp(ops, f, s, i) {
+					break
+				}
+			}
 		}
 
-		f[i] = ops[0]
+	} else {
+
+		if !initFunc(c, s, f, 0) {
+			return nil
+		}
 	}
 
 	return f
 }
 
 func PermutateFunc(c *ProblemContext, f, s []byte) bool {
-	for i := len(f) - 1; i >= 0; i-- {
+
+	min := 0
+
+	if c.tfold {
+		min = 3
+	}
+
+	// fmt.Printf("%v, %s\n", s, string(f))
+
+	mask := AnalyzeFunc(f)
+
+	for i := len(f) - 1; i >= min; i-- {
+
 		op := f[i]
 		arity := s[i]
-		ops := getOps(c, f[:i], arity)
+
+		var ops []byte
+
+		if c.tfold || (arity == 3 && HasFold(f)) || InFold(i, f, s) {
+			ops = c.foldOps[arity]
+		} else {
+			ops = c.ops[arity]
+		}
 
 		if len(ops) == 0 {
 			return false
 		}
 
-		for j, validOp := range ops {
+		if mask[i] != 'i' {
 
-			if op == validOp && j+1 < len(ops) {
-				f[i] = ops[j+1]
-				return true
+		oploop:
+			for j, validOp := range ops {
+
+				if op == validOp {
+					for k := j + 1; k < len(ops); k++ {
+						f[i] = ops[k]
+
+						if checkOp(ops, f, s, i) {
+							if initFunc(c, s, f, i+1) {
+								return true
+							} else {
+								break oploop
+							}
+						}
+					}
+				}
 			}
+		} else {
+			// fmt.Printf("skipped: %d\n", i)
 		}
 
 		f[i] = ops[0]
 	}
+
 	return false
 }
 
 func CreateProblemContext(p Problem) *ProblemContext {
 	var ctx ProblemContext
 
+	ctx.ops = make([][]byte, 4)
+	ctx.foldOps = make([][]byte, 4)
+
+	// for i, _ := range ctx.ops {
+	// 	ctx.ops[i] = make([]byte, 0)
+	// }
+
 	for _, op := range p.Operators {
 		opInfo := OpMap[op]
-		switch opInfo.arity {
-		case 1:
-			ctx.ops1 = append(ctx.ops1, opInfo.sym)
-		case 2:
-			ctx.ops2 = append(ctx.ops2, opInfo.sym)
-		case 3:
-			ctx.ops3 = append(ctx.ops3, opInfo.sym)
-		case 4: // tfold
+		sym := opInfo.sym
+		arity := opInfo.arity
+
+		if sym == 't' {
 			ctx.tfold = true
-			ctx.ops3 = append(ctx.ops3, 'f')
+			sym = 'f'
 		}
+
+		ctx.ops[arity] = append(ctx.ops[arity], sym)
+		if sym != 'f' {
+			ctx.foldOps[arity] = append(ctx.foldOps[arity], sym)
+		}
+	}
+
+	if ctx.tfold {
+		ctx.ops[0] = []byte{'0', '1', 'Y', 'Z'}
+		ctx.foldOps[0] = []byte{'0', '1', 'Y', 'Z'}
+	} else {
+		ctx.ops[0] = []byte{'0', '1', 'X'}
+		ctx.foldOps[0] = []byte{'0', '1', 'X', 'Y', 'Z'}
 	}
 
 	ctx.size = int(p.Size)
@@ -272,7 +402,7 @@ func CreateProblemContext(p Problem) *ProblemContext {
 	ctx.length = int(p.Size - 1)
 
 	// adjust length by one for embedded lambda
-	if HasFold(ctx.ops3) {
+	if HasFold(ctx.ops[3]) {
 		ctx.length--
 	}
 
@@ -280,16 +410,22 @@ func CreateProblemContext(p Problem) *ProblemContext {
 }
 
 func (c *ProblemContext) CheckStruct(st []byte) bool {
-	count := [3]int{len(c.ops1), len(c.ops2), len(c.ops3)}
+	count := [3]int{len(c.ops[1]), len(c.ops[2]), len(c.ops[3])}
 
 	for _, arity := range st {
 		if arity > 0 {
 			count[arity-1]--
 		}
+
+		if len(c.ops[arity]) == 0 {
+			fmt.Printf("no op for arity %d\n", arity)
+			return false
+		}
 	}
 
 	for _, c := range count {
 		if c > 0 {
+			// fmt.Printf("arity %d: %d, %v\n", i+1, c, st)
 			return false
 		}
 	}
@@ -297,28 +433,23 @@ func (c *ProblemContext) CheckStruct(st []byte) bool {
 }
 
 func (c *ProblemContext) CheckFun(fn []byte) bool {
-	for _, o := range c.ops1 {
-		if bytes.IndexByte(fn, o) < 0 {
-			// fmt.Println("skip fn: ", string(fn))
-			return false
-		}
-	}
-	for _, o := range c.ops1 {
-		if bytes.IndexByte(fn, o) < 0 {
-			// fmt.Println("skip fn: ", string(fn))
-			return false
-		}
-	}
-	for _, o := range c.ops3 {
-		if bytes.IndexByte(fn, o) < 0 {
-			// fmt.Println("skip fn: ", string(fn))
-			return false
+
+	for _, ops := range c.ops[1:] {
+		for _, o := range ops {
+			if bytes.IndexByte(fn, o) < 0 {
+				fmt.Printf("skip fn: %s %c\n", string(fn), o)
+				return false
+			}
 		}
 	}
 	return true
 }
 
 func (c *ProblemContext) AddResults(args, outputs []uint64) {
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	if len(args) != len(outputs) {
 		panic(fmt.Sprintf("%d != %d", len(args), len(outputs)))
 	}
@@ -327,11 +458,19 @@ func (c *ProblemContext) AddResults(args, outputs []uint64) {
 }
 
 func (c *ProblemContext) AddResult(arg, output uint64) {
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	c.arguments = append(c.arguments, arg)
 	c.outputs = append(c.outputs, output)
 }
 
 func (c *ProblemContext) CheckFunction(fn EvalFunc) bool {
+
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	ec := EvalContext{make([]uint64, 1)}
 	for i, a := range c.arguments {
 		ec.vars[0] = a
@@ -343,25 +482,3 @@ func (c *ProblemContext) CheckFunction(fn EvalFunc) bool {
 	}
 	return true
 }
-
-// func BruteForce(p Problem) (ProblemContext, NextSolution) {
-// 	ctx := ProblemContext{
-// 		p.Size,
-// 		processOperators(p.Operators),
-// 		make([]uint64, 0),
-// 		make([]uint64, 0),
-// 	}
-
-// 	return ctx, func(s []byte) []byte {
-
-// 		for i := len(s) - 1; i >= 0; i-- {
-// 			b := s[i]
-// 			for j, op := range ctx.operators {
-// 				if b == op && j+1 < len(ctx.operators) {
-// 					s[i] = ctx.operators[j+1]
-// 					return s
-// 				}
-// 			}
-// 		}
-// 	}
-// }

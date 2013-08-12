@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math"
 )
 
 type EvalContext struct {
@@ -109,6 +110,147 @@ func compile1(b []byte) (EvalFunc, int) {
 	}
 }
 
+type AnalyzeContext struct {
+	b             []byte
+	ignoreMask    []byte
+	yZeros, yOnes uint64
+}
+
+func AnalyzeFunc(fn []byte) []byte {
+	var ac AnalyzeContext
+	ac.b = fn
+	ac.ignoreMask = make([]byte, len(fn))
+	for i, _ := range ac.b {
+		ac.ignoreMask[i] = '.'
+	}
+
+	// fmt.Printf("fun: %s\n", string(fn))
+	_, _, s := analyze(&ac, 0, 0)
+	//fmt.Printf("0: %v, 1: %v, %s, %s\n", z, n, string(fn), string(ac.ignoreMask))
+
+	if s != len(fn) {
+		panic(fmt.Errorf("|%s| == %d != %d", string(fn), len(fn), s))
+	}
+
+	return ac.ignoreMask
+}
+
+func analyze(c *AnalyzeContext, index int, ignore uint64) (zeros, ones uint64, size int) {
+
+	next := index + 1
+	size = 0
+
+	if ignore == math.MaxUint64 {
+		c.ignoreMask[index] = 'i'
+	}
+
+	switch c.b[index] {
+	case 'X':
+		zeros, ones = 0, 0
+	case 'Y':
+		zeros, ones = c.yZeros, c.yOnes
+	case 'Z':
+		zeros, ones = 0, 0
+	case '0':
+		zeros, ones = math.MaxUint64, 0
+	case '1':
+		zeros, ones = ^uint64(1), 1
+	case 'i':
+		i1 := ignore
+		i2 := ignore
+		z0, n0, s0 := analyze(c, next, 0)
+		if n0 != 0 {
+			i1 = math.MaxUint64
+		} else if z0 == math.MaxUint64 {
+			i2 = math.MaxUint64
+		}
+		z1, n1, s1 := analyze(c, next+s0, i1)
+		z2, n2, s2 := analyze(c, next+s0+s1, i2)
+
+		if z0 == math.MaxUint64 {
+			zeros = z1
+			ones = n1
+		} else if n0 != 0 {
+			zeros = z2
+			ones = n2
+		} else {
+			zeros = z1 & z2
+			ones = n1 & n2
+		}
+
+		size = s0 + s1 + s2
+
+	case 'f':
+		z0, n0, s0 := analyze(c, next, 0)
+		_, _, s1 := analyze(c, next+s0, 0)
+
+		c.yZeros, c.yOnes = 0, 0
+		for i := 0; i < 8; i++ {
+			c.yZeros &= (z0 >> uint(i*8)) & uint64(0xFF)
+			c.yOnes &= (n0 >> uint(i*8)) & uint64(0xFF)
+		}
+		c.yZeros |= ^uint64(0xFF)
+
+		_, _, s2 := analyze(c, next+s0+s1, 0)
+		zeros, ones = 0, 0
+		size = s0 + s1 + s2
+	case 'n':
+		ones, zeros, size = analyze(c, next, ignore)
+	case 'l':
+		zeros, ones, size = analyze(c, next, (uint64(1)<<63)|(ignore>>1))
+		zeros = (zeros << 1) | 1
+		ones = (ones << 1)
+	case 'r':
+		zeros, ones, size = analyze(c, next, uint64(1)|(ignore<<1))
+		zeros = (zeros >> 1) | (uint64(1) << 63)
+		ones = (ones >> 1)
+	case 'q':
+		zeros, ones, size = analyze(c, next, uint64(0xF)|(ignore<<4))
+		zeros = (zeros >> 4) | (uint64(0xF) << 60)
+		ones = (ones >> 4)
+	case 'h':
+		zeros, ones, size = analyze(c, next, uint64(0xFFFF)|(ignore<<16))
+		zeros = (zeros >> 16) | (uint64(0xFFFF) << 48)
+		ones = (ones >> 16)
+	case 'a':
+		z0, n0, s0 := analyze(c, next, ignore)
+		z1, n1, s1 := analyze(c, next+s0, z0|ignore)
+		zeros = z0 | z1
+		ones = n0 & n1
+		size = s0 + s1
+	case 'o':
+		z0, n0, s0 := analyze(c, next, ignore)
+		z1, n1, s1 := analyze(c, next+s0, n0|ignore)
+		zeros = z0 & z1
+		ones = n0 | n1
+		size = s0 + s1
+	case 'x':
+		z0, n0, s0 := analyze(c, next, ignore)
+		z1, n1, s1 := analyze(c, next+s0, ignore)
+		zeros = (z0 & z1) | (n0 & n1)
+		ones = (z0 & n1) | (n0 & z1)
+		size = s0 + s1
+	case 'p':
+		_, _, s0 := analyze(c, next, ignore)
+		_, _, s1 := analyze(c, next+s0, ignore)
+		// TODO:
+		zeros, ones = 0, 0
+		size = s0 + s1
+	default:
+		panic(string(c.b[index:]))
+	}
+
+	if (zeros & ones) != 0 {
+		panic(fmt.Errorf("overlap: %X, %X\n"))
+	}
+
+	size++
+
+	//fmt.Printf("%s: z: %X, n: %X\n", c.b[index:index+size], zeros, ones)
+
+	return
+}
+
 func HasOp(b []byte, op byte) bool {
 	return bytes.IndexByte(b, op) >= 0
 }
@@ -121,23 +263,10 @@ func HasIf0(b []byte) bool {
 	return HasOp(b, 'i')
 }
 
-func InFold(b []byte) (result bool) {
-	result = false
-	i := bytes.IndexByte(b, 'f')
-	if i >= 0 {
-		// what a hack!
-		defer func() { recover() }()
-		_, _, j := compile2(b[1+i:])
-		result = true
-		compile1(b[1+i+j:])
-	}
-	return false
-}
-
 var OpMap = map[string]struct{ sym, arity byte }{
 	"if0":   {'i', 3},
 	"fold":  {'f', 3},
-	"tfold": {'t', 4},
+	"tfold": {'t', 3},
 	"not":   {'n', 1},
 	"shl1":  {'l', 1},
 	"shr1":  {'r', 1},

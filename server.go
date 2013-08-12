@@ -68,19 +68,6 @@ type Problem struct {
 	Challenge *string  `json:"challenge",omitempty`
 }
 
-// func (s *Server) Train(size int) Problem {
-// 	var problem Problem
-// 	data := s.Post("train", fmt.Sprintf(
-// 		`{ "size": %d }`, size))
-
-// 	err := json.Unmarshal(data, &problem)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	return problem
-// }
-
 type EvalResponse struct {
 	Status  string    `json:"status"`
 	Outputs *[]string `json:"outputs"`
@@ -110,7 +97,7 @@ func decodeHex(s string) uint64 {
 	return result
 }
 
-func (s *Server) Eval(id string, args []uint64) []uint64 {
+func (s *Server) Eval(id string, args []uint64) ([]uint64, bool) {
 	buffer := bytes.NewBufferString(
 		fmt.Sprintf(`{
 			"id": "%s",
@@ -129,7 +116,11 @@ func (s *Server) Eval(id string, args []uint64) []uint64 {
 	respData := s.Post("eval", buffer.String())
 
 	if string(respData) == "already solved" {
-		return nil
+		return nil, true
+	}
+
+	if string(respData) == "time limit exceeded" {
+		return nil, false
 	}
 
 	err := json.Unmarshal(respData, &resp)
@@ -147,7 +138,7 @@ func (s *Server) Eval(id string, args []uint64) []uint64 {
 		outputs[i] = decodeHex(s)
 	}
 
-	return outputs
+	return outputs, false
 }
 
 type GuessResponse struct {
